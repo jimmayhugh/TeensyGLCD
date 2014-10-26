@@ -1,6 +1,6 @@
 /* Teensy_UTFT_I2C_1Wire_Slave
 // 
-// Version 0.01 - 08/22/2014 - Jim Mayhugh
+// Version 0.03 - 10/05/2014 - Jim Mayhugh
 //
 // This program requires the UTFT library from
 // web: http://www.henningkarlsen.com/electronics
@@ -12,9 +12,29 @@
 // This example code is in the public domain.
 */
 
-#define USE1WIRE 1 // set to 1 to use 1-wire, 0 for I2C
+const char* versionStrNumber = "V-0.03";
+const char* versionStrDate   = "10/05/2014";
+
+#define USE1WIRE   1 // set to 1 to use 1-wire, 0 for I2C
+#define USECPLD    1 // set to 1 if using CTE70CPLD unit with paging and backlight control
+#define USEVGAONLY 1 // if set to 1, use VGA Values ONLY, otherwise use VGA or RGB
+
+#define FALSE 0
+
+// Should restart Teensy 3, will also disconnect USB during restart
+
+// From http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0337e/Cihcbadd.html
+// Search for "0xE000ED0C"
+// Original question http://forum.pjrc.com/threads/24304-_reboot_Teensyduino%28%29-vs-_restart_Teensyduino%28%29?p=35981#post35981
+
+#define RESTART_ADDR       0xE000ED0C
+#define READ_RESTART()     (*(volatile uint32_t *)RESTART_ADDR)
+#define WRITE_RESTART(val) ((*(volatile uint32_t *)RESTART_ADDR) = (val))
 
 #include <UTFT.h>
+#include <TeensyNet.h>
+#include <TeensyNetGLCD.h>
+//#include <TeensyGLCD.h>
 #if USE1WIRE == 1
 #include <OneWireSlave.h>
 #include <t3mac.h>
@@ -34,65 +54,18 @@ extern uint8_t SmallFont[];
 extern uint8_t BigFont[];
 extern uint8_t UbuntuBold[];
 extern uint8_t SevenSegNumFont[];
+extern uint8_t ExtraSevenSegNumFont[];
 
 const uint8_t ledPin = 13;
 
-const uint8_t  displayStrSize = 33; 
-char displayStr[displayStrSize+1];
 
-typedef struct
-{
-  uint32_t  flags;                   // various flags to control setup
-  uint8_t   font;                    // Font to use - 0 - No Change, 1 - UbuntuBold, 2 - BigFont, 3 - Small Font, 4 - SevenSegNumFont
-  uint8_t   bGR;                     // Background RED value or VGA_Color
-  uint8_t   bGG;                     // Background GREEN value
-  uint8_t   bGB;                     // Background BLUE value
-  uint8_t   cR;                      // Character/foreground RED or VGA_Color value for draw*, fill* and print commands 
-  uint8_t   cG;                      // Character/foreground GREEN value for draw*, fill* and print commands
-  uint8_t   cB;                      // Character/foreground BLUE value for draw*, fill* and print commands
-  uint8_t   dispP;                   // Display Page 0 - 7 (CPLD only)
-  uint8_t   lineP;                   // Line Position 0 - 14
-  uint8_t   chrP;                    // Character Position 0 - 32 or  0xFC 0=LEFT 0xFD=RIGHT 0xFE=CENTER
-  uint16_t  degR;                    // Degress of Rotation 0-359 Default = 0
-  char      dSTR[displayStrSize+1];  // Character string to print
-  uint16_t   x1;                     // rectangle x start or x center of circle
-  uint16_t   y1;                     // rectangle y start or y center of circle
-  uint16_t   x2;                     // rectangle x end
-  uint16_t   y2;                     // rectangle y end
-  uint16_t   rad;                    // radius of circle
-  uint8_t   bRDY;                    // Buffer ready to process = 1
-}glcdCMD;
-
-const uint32_t setInitL           = 0x00000001;               // initialize screen (Landscape)
-const uint32_t setInitP           = (setInitL          << 1); // 0x00000001 //initialize screen (Portrait)
-const uint32_t clrScn             = (setInitP          << 1); // 0x00000002;  // clear scrn flag
-const uint32_t setFillScrRGB      = (clrScn            << 1); // 0x00000004;  // set fillSCR() with RGB values
-const uint32_t setFillScrVGA      = (setFillScrRGB     << 1); // 0x00000008;  // set fillSCR() with VGA coloors
-const uint32_t setBackRGB         = (setFillScrVGA     << 1); // 0x00000010;  // set setBackColor() with RGB values
-const uint32_t setBackVGA         = (setBackRGB        << 1); // 0x00000020;  // set setBackColor() with VGA values
-const uint32_t setColorRGB        = (setBackVGA        << 1); // 0x00000040;  // set setColor() with RGB values
-const uint32_t setColorVGA        = (setColorRGB       << 1); // 0x00000080;  // set setColor() with VGA values
-const uint32_t setfont            = (setColorVGA       << 1); // 0x00000200;  // set font
-const uint32_t setDispPage        = (setfont           << 1); // 0x00000400;  // set display Page (CPLD only)
-const uint32_t setWrPage          = (setDispPage       << 1); // 0x00000800;  // set Page to Write Page (CPLD only)
-const uint32_t setDrawPixel       = (setWrPage         << 1); // 0x00001000;  // set drawPixel
-const uint32_t setDrawLine        = (setDrawPixel      << 1); // 0x00002000;  // set drawLine()
-const uint32_t setDrawRect        = (setDrawLine       << 1); // 0x00004000;  // set drawRect()
-const uint32_t setFillRect        = (setDrawRect       << 1); // 0x00008000;  // set fillRect();
-const uint32_t setDrawRRect       = (setFillRect       << 1); // 0x00010000;  // set drawRoundRec()
-const uint32_t setDrawFRRect      = (setDrawRRect      << 1); // 0x00020000;  // set drawFillRoundRec()
-const uint32_t setDrawCircle      = (setDrawFRRect     << 1); // 0x00040000;  // set drawCircle()
-const uint32_t setDrawFillCircle  = (setDrawCircle     << 1); // 0x00080000;  // set fillCircle()
-const uint32_t setPrintStr        = (setDrawFillCircle << 1); // 0x00080000;  // set fillCircle()
-
-
-glcdCMD glcdCLR = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "", 0, 0, 0, 0, 0, 0};
-
-union glcdData
-{
-  glcdCMD glcdBUF;
-  uint8_t glcdARRAY[sizeof(glcdCMD)];
-}glcdUNION;
+#if USECPLD == 1
+const uint8_t oneWireSlave = 0x45; // slave 1-wire ID for CPLD display
+UTFT    myGLCD(CTE70CPLD,23,22, 3, 4);     // 7" CTE display with Paged Display
+#else
+const uint8_t oneWireSlave = 0x44; // slave 1-wire ID for non-CPLD display
+UTFT    myGLCD(CTE70,23,22, 3, 4);     // 7" CTE display
+#endif
 
 #if USE1WIRE == 1 // set for 1-Wire
 
@@ -104,7 +77,6 @@ void blinking(void);
 int ledState = LOW;             // ledState used to set the LED
 long previousMillis = 0;        // will store last time LED was updated
 long interval = 250;            // interval at which to blink (milliseconds)
-const uint8_t oneWireSlave = 0x44; // slave addr
 
 //               {Family ,         <---, ----, ----, ID--, ----, --->,  CRC} 
 uint8_t rom[8] = {oneWireSlave,    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  0x00};
@@ -126,34 +98,22 @@ size_t addr;
 #define WRITE 0x10
 #define READ  0x20
 #endif
-// uint8_t i2cBuff[i2cBuffSize]; // command string sent to GLCD Slave
-
-enum vgaColor {BLACK, WHITE, RED, GREEN, BLUE, SILVER, GRAY, MAROON, YELLOW, OLIVE, LIME, AQUA, TEAL, NAVY, FUCHSIA, PURPLE};
-
-
-// Set the pins to the correct ones for your development shield
-// ------------------------------------------------------------
-// Teensy 3.x TFT Test Board                   : <display model>,23,22, 3, 4
-//
-// Remember to change the model parameter to suit your display module!
-// UTFT    myGLCD(ITDB50,23,22, 3, 4); // 5" SEEEDStudio display
-UTFT    myGLCD(CTE70,23,22, 3, 4);     // 7" CTE display
-
-
 
 
 int x = 0, y = 0;
-uint32_t setDebug = 0x00000001;
-const uint32_t debugALL  = 0xFFFFFFFF;
+uint32_t setDebug = 0x00000008;
+const uint32_t debugALL   = 0xFFFFFFFF;
 const uint32_t debug1Wire = 0x00000001;
 const uint32_t debugI2C   = 0x00000002;
 const uint32_t debugGLCD  = 0x00000004;
+const uint32_t debugCPLD  = 0x00000008;
 
 uint8_t fontHMult, fontVMult;
 
 
 void setup()
 {
+  uint8_t x;
   if(setDebug)
   {
     Serial.begin(115200);
@@ -168,7 +128,7 @@ void setup()
 #if USE1WIRE == 1
   // set the 1-wire address:
   read_mac();
-  for( uint8_t x = 0; x < 6; x++ )
+  for( x = 0; x < 6; x++ )
   {
     rom[x+1] = mac[x];
   }
@@ -188,14 +148,36 @@ void setup()
   }
 #else
   // Setup for Slave mode, address 0x44, pins 29/30, external pullups, 2400kHz
-  Wire1.begin(I2C_SLAVE, 0x44, I2C_PINS_29_30, I2C_PULLUP_EXT, I2C_RATE_400);
+  Wire1.begin(I2C_SLAVE, 0x44, I2C_PINS_29_30, I2C_PULLUP_EXT, I2C_RATE_2400);
   // register events
   Wire1.onReceive(receiveEvent);
 #endif
   
   myGLCD.InitLCD(LANDSCAPE);  // default mode
+#if USECPLD == 1
+  for(x = 0; x < 8; x++)
+  {
+    myGLCD.setWritePage(x);
+    myGLCD.clrScr();
+    myGLCD.setDisplayPage(x);
+  }
+    myGLCD.setWritePage(0);
+    myGLCD.clrScr();
+    myGLCD.setDisplayPage(0);
+  myGLCD.lcdOn(); // turn on LCD if CTE70CPLD
+#endif
 
   myGLCD.clrScr();
+  myGLCD.setFont(UbuntuBold);
+  fontVMult = myGLCD.getFontYsize();
+  myGLCD.setColor(getVGAcolor(WHITE));
+  #if USE1WIRE == 1
+  myGLCD.print("1-Wire Display Ready", 0, 0, 0);
+  #else
+  myGLCD.print("I2C Display Ready", 0, 0, 0);
+  #endif
+  myGLCD.print(versionStrNumber, 0, (1 * fontVMult), 0);
+  myGLCD.print(versionStrDate, 0, (2 * fontVMult), 0);
 }
 
 void loop()
@@ -230,7 +212,7 @@ void loop()
     }
     Serial.println();
 
-    blinking();
+ //   blinking();
   }
 #else
   if(glcdUNION.glcdBUF.bRDY)
@@ -361,6 +343,7 @@ void parseCommand(void)
         break;
       }
 
+#if USEVGAONLY == 0
       case setFillScrRGB: // set screen color with RGB Values
       {
         myGLCD.fillScr(glcdUNION.glcdBUF.bGR, glcdUNION.glcdBUF.bGG, glcdUNION.glcdBUF.bGB);
@@ -373,19 +356,6 @@ void parseCommand(void)
           Serial.print(F(", ")); 
           Serial.print(glcdUNION.glcdBUF.bGB);
           Serial.println();
-        } 
-        break;
-      }
-
-      case setFillScrVGA: // set screen color with VGA_Color Value
-      {
-        myGLCD.fillScr(getVGAcolor(glcdUNION.glcdBUF.bGR));
-        if(setDebug)
-        {
-          Serial.print(F("glcdUNION.glcdBUF.bGR = "));
-          Serial.print(glcdUNION.glcdBUF.bGR);
-          Serial.print(F(" - Screen Fill VGA Color set to 0x"));
-          Serial.println(getVGAcolor(glcdUNION.glcdBUF.bGR), HEX);
         } 
         break;
       }
@@ -406,17 +376,6 @@ void parseCommand(void)
         break;
       }
 
-      case setBackVGA:
-      {
-        myGLCD.setBackColor(getVGAcolor(glcdUNION.glcdBUF.bGR));
-        if(setDebug)
-        {
-          Serial.print(F("Background UGA Color set to 0x"));
-          Serial.println(getVGAcolor(glcdUNION.glcdBUF.bGR), HEX);
-        } 
-        break;
-      }
-
       case setColorRGB:
       {
         myGLCD.setColor(glcdUNION.glcdBUF.cR, glcdUNION.glcdBUF.cG, glcdUNION.glcdBUF.cB);
@@ -433,6 +392,31 @@ void parseCommand(void)
         break;
       }
 
+#endif
+      case setFillScrVGA: // set screen color with VGA_Color Value
+      {
+        myGLCD.fillScr(getVGAcolor(glcdUNION.glcdBUF.bGR));
+        if(setDebug)
+        {
+          Serial.print(F("glcdUNION.glcdBUF.bGR = "));
+          Serial.print(glcdUNION.glcdBUF.bGR);
+          Serial.print(F(" - Screen Fill VGA Color set to 0x"));
+          Serial.println(getVGAcolor(glcdUNION.glcdBUF.bGR), HEX);
+        } 
+        break;
+      }
+
+      case setBackVGA:
+      {
+        myGLCD.setBackColor(getVGAcolor(glcdUNION.glcdBUF.bGR));
+        if(setDebug)
+        {
+          Serial.print(F("Background UGA Color set to 0x"));
+          Serial.println(getVGAcolor(glcdUNION.glcdBUF.bGR), HEX);
+        } 
+        break;
+      }
+
       case setColorVGA:
       {
         myGLCD.setColor(getVGAcolor(glcdUNION.glcdBUF.cR));
@@ -444,7 +428,7 @@ void parseCommand(void)
         break;
       }
 
-      case setfont:
+      case setFont:
       {
         switch(glcdUNION.glcdBUF.font)
         {
@@ -474,6 +458,13 @@ void parseCommand(void)
             myGLCD.setFont(SevenSegNumFont);
             if(setDebug)
               Serial.println(F("Set Font to SevenSegNumFont"));
+            break;  
+          }
+          case 5:
+          {
+            myGLCD.setFont(ExtraSevenSegNumFont);
+            if(setDebug)
+              Serial.println(F("Set Font to ExtraSevenSegNumFont"));
             break;  
           }
           case 0:
@@ -668,7 +659,11 @@ void parseCommand(void)
 
       case setPrintStr:
       {
+#if USEVGAONLY == 1
+        myGLCD.print((char *) glcdUNION.glcdBUF.dSTR, (glcdUNION.glcdBUF.chrP * fontHMult), (glcdUNION.glcdBUF.lineP * fontVMult));
+#else
         myGLCD.print((char *) glcdUNION.glcdBUF.dSTR, (glcdUNION.glcdBUF.chrP * fontHMult), (glcdUNION.glcdBUF.lineP * fontVMult), glcdUNION.glcdBUF.degR);
+#endif
         if(setDebug)
         {
           Serial.print(F("Character string ** "));
@@ -678,9 +673,65 @@ void parseCommand(void)
           Serial.print(F(", character position ")); 
           Serial.print(glcdUNION.glcdBUF.lineP, DEC);
           Serial.print(F(", rotated ")); 
+#if USEVGAONLY == 0
           Serial.print(glcdUNION.glcdBUF.degR, DEC);
+#endif
           Serial.println(F(" degrees"));
         }
+        break;
+      }
+
+      case setPrintStrXY:
+      {
+#if USEVGAONLY == 1
+        myGLCD.print((char *) glcdUNION.glcdBUF.dSTR, glcdUNION.glcdBUF.x1, glcdUNION.glcdBUF.y1);
+#else
+        myGLCD.print((char *) glcdUNION.glcdBUF.dSTR, glcdUNION.glcdBUF.x1, glcdUNION.glcdBUF.y1, glcdUNION.glcdBUF.degR);
+#endif
+        if(setDebug)
+        {
+          Serial.print(F("Character string ** "));
+          Serial.print((char *) glcdUNION.glcdBUF.dSTR);
+          Serial.print(F(" ** printed at ")); 
+          Serial.print(glcdUNION.glcdBUF.x1, DEC);
+          Serial.print(F(", ")); 
+          Serial.print(glcdUNION.glcdBUF.y1, DEC);
+          Serial.print(F(", rotated ")); 
+#if USEVGAONLY == 0
+          Serial.print(glcdUNION.glcdBUF.degR, DEC);
+#endif
+          Serial.println(F(" degrees"));
+        }
+        break;
+      }
+
+      case setPageWrite:
+      {
+        myGLCD.setWritePage(glcdUNION.glcdBUF.dispP);
+        if(setDebug & debugCPLD)
+        {
+          Serial.print(F("setWritePage() page  "));
+          Serial.print(glcdUNION.glcdBUF.dispP);
+          Serial.println(F(" selected"));
+        }
+        break;
+      }
+
+      case setPageDisplay:
+      {
+        myGLCD.setDisplayPage(glcdUNION.glcdBUF.dispP);
+        if(setDebug & debugCPLD)
+        {
+          Serial.print(F("setDisplayPage() page  "));
+          Serial.print(glcdUNION.glcdBUF.dispP);
+          Serial.println(F(" selected"));
+        }
+        break;
+      }
+
+      case setResetDisplay:
+      {
+        softReset();
         break;
       }
 
@@ -690,6 +741,7 @@ void parseCommand(void)
       }
     }
   }  
+  KickDog();
 }
 
 void clearCommandBuf(void)
@@ -807,6 +859,34 @@ uint16_t getVGAcolor(uint8_t VGAcolor)
   }
   return(color);
 }
+
+void softReset(void)
+{
+  // 0000101111110100000000000000100
+  // Assert [2]SYSRESETREQ
+  WRITE_RESTART(0x5FA0004);
+}  
+
+void KickDog(void)
+{
+  noInterrupts();
+  WDOG_REFRESH = 0xA602;
+  WDOG_REFRESH = 0xB480;
+  interrupts();
+}
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+  void startup_early_hook() {
+    WDOG_TOVALL = 0x93E0; // The next 2 lines sets the time-out value. (5 Minutes) This is the value that the watchdog timer compare itself to.
+    WDOG_TOVALH = 0x0004;
+    WDOG_STCTRLH = (WDOG_STCTRLH_ALLOWUPDATE | WDOG_STCTRLH_WDOGEN | WDOG_STCTRLH_WAITEN | WDOG_STCTRLH_STOPEN); // Enable WDG
+    //WDOG_PRESC = 0; // prescaler 
+  }
+#ifdef __cplusplus
+}
+#endif
 
 void printCommand(void)
 {
